@@ -1,0 +1,32 @@
+# Dashboard-Karte: Dashboard bearbeiten -> Karte hinzufügen -> "Manuell"
+# und diesen Inhalt einfügen (z.B. unter die Sektion "Aktuell").
+type: grid
+columns: 2
+square: false
+title: Ein / Aus
+cards:
+  - type: tile
+    entity: switch.heizung_aktiv
+    name: Heizung
+    tap_action:
+      action: toggle
+      confirmation:
+        text: Heizung wirklich umschalten?
+  - type: tile
+    entity: switch.warmwasser_aktiv
+    name: Warmwasser
+    tap_action:
+      action: toggle
+      confirmation:
+        text: Warmwasser wirklich umschalten?
+  - type: button
+    name: Alles AUS
+    icon: mdi:power
+    show_state: false
+    grid_options:
+      columns: full
+    tap_action:
+      action: perform-action
+      perform_action: script.alles_aus
+      confirmation:
+        text: Heizung UND Warmwasser komplett ausschalten? (Frostschutz bleibt aktiv)

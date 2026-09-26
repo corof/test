@@ -1,0 +1,211 @@
+# =============================================================================
+#  KM271 / Buderus Logamatic 2107 – Heizung und Warmwasser komplett ausschalten
+# =============================================================================
+#
+#  Prinzip (was die Logamatic 2107 per KM271 wirklich kann):
+#
+#  Heizung AUS   -> Sommer/Winter-Schwelle auf "Sommer" (Wert 9 = dauerhaft
+#                   Sommerbetrieb). Heizkreis 1 wird abgeschaltet, Pumpe aus,
+#                   Frostschutz bleibt aktiv. Zusätzlich HK1-Betriebsart "Nacht".
+#  Warmwasser AUS -> WW-Betriebsart "Nacht" = keine Warmwasserladung.
+#
+#  Heizung + Warmwasser aus  =>  Brenner startet nur noch für Frostschutz.
+#
+#  Beim Wiedereinschalten werden die vorher gespeicherten Werte
+#  (input_text-Helfer, überleben HA-Neustarts) zurückgeschrieben.
+#
+#  >>> NUR DEN BLOCK "KONFIGURATION" UNTEN ANPASSEN <<<
+#  Die Entity-IDs findest du unter Einstellungen -> Geräte & Dienste ->
+#  Entitäten, Suche "Heizung Verscio".
+# =============================================================================
+
+input_text:
+  km271_backup_hk_betriebsart:
+    name: KM271 Backup HK1 Betriebsart
+    max: 32
+  km271_backup_sommer_schwelle:
+    name: KM271 Backup Sommer-Schwelle
+    max: 32
+  km271_backup_ww_betriebsart:
+    name: KM271 Backup WW Betriebsart
+    max: 32
+
+script:
+  heizung_aus:
+    alias: Heizung komplett aus
+    icon: mdi:radiator-off
+    mode: single
+    # ---------------------------------------------------------------- KONFIGURATION
+    variables: &km271
+      # Select "HK1 Betriebsart" (Nacht / Tag / Auto)
+      hk_betriebsart: select.heizung_verscio_hk1_betriebsart
+      # Sommer/Winter-Umschaltschwelle HK1 – darf number.* ODER select.* sein
+      sommer_schwelle: number.heizung_verscio_hk1_sommer_ab
+      # Select "WW Betriebsart" (Nacht / Tag / Auto)
+      ww_betriebsart: select.heizung_verscio_ww_betriebsart
+      # Options-Texte exakt so, wie sie im Dropdown stehen
+      opt_nacht: "Nacht"
+      opt_auto: "Auto"
+      # Sommer-Schwelle: Wert für "dauerhaft Sommer" (number) bzw. Option (select)
+      sommer_wert: 9
+      sommer_option: "Sommer"
+      # Fallback beim Einschalten, falls kein Backup vorhanden ist
+      sommer_fallback_wert: 17
+      sommer_fallback_option: "17 °C"
+    # ---------------------------------------------------------------------------
+    sequence:
+      # Aktuellen Zustand sichern – aber nur, wenn die Heizung nicht schon aus ist,
+      # sonst würde "Sommer" als Backup gespeichert.
+      - if:
+          - condition: template
+            value_template: >
+              {{ states(sommer_schwelle) not in [sommer_wert | string,
+                 (sommer_wert | float) | string, sommer_option] }}
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.km271_backup_sommer_schwelle
+            data:
+              value: "{{ states(sommer_schwelle) }}"
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.km271_backup_hk_betriebsart
+            data:
+              value: "{{ states(hk_betriebsart) }}"
+      - if:
+          - condition: template
+            value_template: "{{ sommer_schwelle.startswith('select.') }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ sommer_schwelle }}"
+            data:
+              option: "{{ sommer_option }}"
+        else:
+          - action: number.set_value
+            target:
+              entity_id: "{{ sommer_schwelle }}"
+            data:
+              value: "{{ sommer_wert }}"
+      # Die KM271 braucht zwischen zwei Schreibbefehlen etwas Zeit
+      - delay: 2
+      - action: select.select_option
+        target:
+          entity_id: "{{ hk_betriebsart }}"
+        data:
+          option: "{{ opt_nacht }}"
+
+  heizung_ein:
+    alias: Heizung wieder ein
+    icon: mdi:radiator
+    mode: single
+    variables: *km271
+    sequence:
+      - variables:
+          backup_sommer: "{{ states('input_text.km271_backup_sommer_schwelle') }}"
+          backup_hk: "{{ states('input_text.km271_backup_hk_betriebsart') }}"
+      - if:
+          - condition: template
+            value_template: "{{ sommer_schwelle.startswith('select.') }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ sommer_schwelle }}"
+            data:
+              option: >
+                {{ backup_sommer if backup_sommer in (state_attr(sommer_schwelle, 'options') or [])
+                   and backup_sommer != sommer_option else sommer_fallback_option }}
+        else:
+          - action: number.set_value
+            target:
+              entity_id: "{{ sommer_schwelle }}"
+            data:
+              value: >
+                {{ backup_sommer | float if backup_sommer | is_number
+                   and backup_sommer | float != sommer_wert | float
+                   else sommer_fallback_wert }}
+      - delay: 2
+      - action: select.select_option
+        target:
+          entity_id: "{{ hk_betriebsart }}"
+        data:
+          option: >
+            {{ backup_hk if backup_hk in (state_attr(hk_betriebsart, 'options') or [])
+               else opt_auto }}
+
+  warmwasser_aus:
+    alias: Warmwasser aus
+    icon: mdi:water-off
+    mode: single
+    variables: *km271
+    sequence:
+      - if:
+          - condition: template
+            value_template: "{{ states(ww_betriebsart) != opt_nacht }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.km271_backup_ww_betriebsart
+            data:
+              value: "{{ states(ww_betriebsart) }}"
+      - action: select.select_option
+        target:
+          entity_id: "{{ ww_betriebsart }}"
+        data:
+          option: "{{ opt_nacht }}"
+
+  warmwasser_ein:
+    alias: Warmwasser wieder ein
+    icon: mdi:water-boiler
+    mode: single
+    variables: *km271
+    sequence:
+      - variables:
+          backup_ww: "{{ states('input_text.km271_backup_ww_betriebsart') }}"
+      - action: select.select_option
+        target:
+          entity_id: "{{ ww_betriebsart }}"
+        data:
+          option: >
+            {{ backup_ww if backup_ww in (state_attr(ww_betriebsart, 'options') or [])
+               and backup_ww != opt_nacht else opt_auto }}
+
+  alles_aus:
+    alias: Heizung + Warmwasser komplett aus
+    icon: mdi:power
+    mode: single
+    sequence:
+      - action: script.heizung_aus
+      - delay: 2
+      - action: script.warmwasser_aus
+
+template:
+  - switch:
+      - name: Heizung aktiv
+        unique_id: km271_switch_heizung_aktiv
+        icon: >
+          {{ 'mdi:radiator' if is_state('switch.heizung_aktiv', 'on') else 'mdi:radiator-off' }}
+        # AUS, sobald die Sommer-Schwelle auf "dauerhaft Sommer" steht.
+        # Entity-ID/Werte hier ebenfalls anpassen, falls oben geändert!
+        state: >
+          {% set s = states('number.heizung_verscio_hk1_sommer_ab') %}
+          {{ s not in ['9', '9.0', 'Sommer', 'unknown', 'unavailable'] }}
+        availability: >
+          {{ has_value('number.heizung_verscio_hk1_sommer_ab') }}
+        turn_on:
+          - action: script.heizung_ein
+        turn_off:
+          - action: script.heizung_aus
+
+      - name: Warmwasser aktiv
+        unique_id: km271_switch_warmwasser_aktiv
+        icon: >
+          {{ 'mdi:water-boiler' if is_state('switch.warmwasser_aktiv', 'on') else 'mdi:water-off' }}
+        state: >
+          {{ not is_state('select.heizung_verscio_ww_betriebsart', 'Nacht') }}
+        availability: >
+          {{ has_value('select.heizung_verscio_ww_betriebsart') }}
+        turn_on:
+          - action: script.warmwasser_ein
+        turn_off:
+          - action: script.warmwasser_aus
