@@ -66,3 +66,39 @@ def set_value_in_toml(path: str | Path, section: str, key: str, value) -> None:
         lines += ["", header]
     lines.append(rendered)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if v is None:
+        return '""'
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def dump_toml(cfg: dict) -> str:
+    """Serialisiert die (flache bzw. zweistufige) Konfiguration als TOML."""
+    lines = ["# swinglab – von der App gespeichert", ""]
+
+    def section(name: str, d: dict):
+        scalars = {k: v for k, v in d.items() if not isinstance(v, dict) and not k.startswith("_")}
+        if scalars:
+            lines.append(f"[{name}]")
+            lines.extend(f"{k} = {_toml_value(v)}" for k, v in scalars.items())
+            lines.append("")
+        for k, v in d.items():
+            if isinstance(v, dict):
+                section(f"{name}.{k}", v)
+
+    for k, v in cfg.items():
+        if isinstance(v, dict) and not k.startswith("_"):
+            section(k, v)
+    return "\n".join(lines)
+
+
+def save_config(cfg: dict, path: str | Path | None = None) -> Path:
+    path = Path(path or cfg.get("_config_path") or "config.toml")
+    path.write_text(dump_toml(cfg), encoding="utf-8")
+    return path

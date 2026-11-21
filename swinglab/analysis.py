@@ -9,6 +9,7 @@ Vorzeichen-Konventionen (Rechtshänder wie Linkshänder gleich):
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 
@@ -21,9 +22,14 @@ PHASE_LABELS = {"address": "Address", "takeaway": "Takeaway", "top": "Top",
 LEG_RATIO = 0.49  # Oberschenkel + Unterschenkel ≈ 0.49 × Körpergrösse (Drillis/Contini)
 
 
+def _nanmean0(stack: np.ndarray) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmean(stack, axis=0)
+
+
 def _mid(a: np.ndarray, i: int, j: int) -> np.ndarray:
-    with np.errstate(all="ignore"):
-        return np.nanmean(np.stack([a[:, i], a[:, j]]), axis=0)
+    return _nanmean0(np.stack([a[:, i], a[:, j]]))
 
 
 def hands(t: PoseTrack) -> np.ndarray:
@@ -39,8 +45,7 @@ def chest(t: PoseTrack) -> np.ndarray:
 
 
 def head(t: PoseTrack) -> np.ndarray:
-    with np.errstate(all="ignore"):
-        return np.nanmean(np.stack([t.px[:, NOSE], t.px[:, L_EAR], t.px[:, R_EAR]]), axis=0)
+    return _nanmean0(np.stack([t.px[:, NOSE], t.px[:, L_EAR], t.px[:, R_EAR]]))
 
 
 def leg_length_px(t: PoseTrack, frame: int, span: int = 3) -> float:

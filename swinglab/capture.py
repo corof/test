@@ -16,6 +16,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -31,7 +32,17 @@ def _backend(name: str) -> int:
             "any": cv2.CAP_ANY}[name]
 
 
+def is_file_source(cam: dict) -> bool:
+    """Demo-/Testmodus: `index` darf ein Videopfad sein (wird in Echtzeit geloopt)."""
+    return isinstance(cam["index"], str) and not cam["index"].strip().isdigit()
+
+
 def open_camera(cam: dict, backend: str = "auto") -> cv2.VideoCapture:
+    if is_file_source(cam):
+        cap = cv2.VideoCapture(cam["index"])
+        if not cap.isOpened():
+            raise RuntimeError(f"Video {cam['index']} lässt sich nicht öffnen")
+        return cap
     cap = cv2.VideoCapture(int(cam["index"]), _backend(backend))
     if not cap.isOpened():
         raise RuntimeError(f"Kamera {cam['index']} lässt sich nicht öffnen")
@@ -44,7 +55,7 @@ def open_camera(cam: dict, backend: str = "auto") -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if cam.get("autofocus") else 0)
     if cam.get("focus", -1) is not None and cam.get("focus", -1) >= 0:
         cap.set(cv2.CAP_PROP_FOCUS, cam["focus"])
-    if cam.get("exposure") is not None:
+    if cam.get("exposure") not in (None, "", "auto"):
         cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25 if platform.system() != "Windows" else 0)
         cap.set(cv2.CAP_PROP_EXPOSURE, cam["exposure"])
     if cam.get("gain", -1) is not None and cam.get("gain", -1) >= 0:
@@ -82,8 +93,17 @@ class CameraWorker(threading.Thread):
         self.running.set()
         params = [cv2.IMWRITE_JPEG_QUALITY, self.q]
         n, t0 = 0, time.perf_counter()
+        is_file = is_file_source(self.cam)
+        period = 1.0 / float(cap.get(cv2.CAP_PROP_FPS) or self.cam["fps"]) if is_file else 0
+        t_next = time.perf_counter()
         while self.running.is_set():
+            if is_file:  # Echtzeit simulieren, am Ende von vorne
+                t_next += period
+                time.sleep(max(0.0, t_next - time.perf_counter()))
             if not cap.grab():
+                if is_file:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
                 time.sleep(0.005)
                 continue
             ts = time.perf_counter()
@@ -128,44 +148,144 @@ def write_clip(path: Path, frames: list, indices: list[int], fps: float) -> None
     vw.release()
 
 
-class Recorder:
-    def __init__(self, cfg: dict, session_dir: Path):
+class CaptureEngine:
+    """GUI-unabhängige Aufnahme-Engine.
+
+    - `start()` öffnet beide Kameras (Live-Bild via `latest(view)`) und das Mikrofon.
+    - Ist `armed` gesetzt, löst das Treffgeräusch das Speichern aus; `trigger_manual()` geht immer.
+    - Gespeicherte Swings werden über `on_swing(path)` gemeldet, Meldungen über `on_status(text)`.
+    """
+
+    def __init__(self, cfg: dict, session_dir: Path | None = None,
+                 on_swing: Callable[[Path], None] | None = None,
+                 on_status: Callable[[str], None] | None = None):
         self.cfg = cfg
         self.session_dir = session_dir
-        session_dir.mkdir(parents=True, exist_ok=True)
+        self.on_swing = on_swing or (lambda p: None)
+        self.on_status = on_status or (lambda s: None)
         cap = cfg["capture"]
         buf_s = cap["pre_roll_s"] + cap["post_roll_s"] + 2
         self.workers = {v: CameraWorker(v, cfg["cameras"][v], cap["backend"], buf_s,
                                         cap["jpeg_quality"]) for v in VIEWS}
         self.triggers: queue.Queue = queue.Queue()
-        self.saved: list[Path] = []
-        self._pool = None
+        self.detector = None
+        self.armed = False
+        self.saving = False
+        self._saver: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    # --- Lebenszyklus -----------------------------------------------------
+    def start(self, wait_s: float = 10.0) -> dict[str, str]:
+        """Startet Kameras und Mikrofon. Gibt je Ansicht Info oder Fehlertext zurück."""
+        for w in self.workers.values():
+            w.start()
+        deadline = time.time() + wait_s
+        while time.time() < deadline and not all(
+                w.running.is_set() or w.error for w in self.workers.values()):
+            time.sleep(0.05)
+        status = {v: (f"FEHLER: {w.error}" if w.error else w.info or "keine Antwort")
+                  for v, w in self.workers.items()}
+        acfg = self.cfg["audio"]
+        if acfg["enabled"]:
+            from .audio import LiveDetectorConfig, LiveImpactDetector
+            dcfg = LiveDetectorConfig(**{k: acfg[k] for k in (
+                "samplerate", "highpass_hz", "threshold_factor", "min_peak", "refractory_s",
+                "device")})
+            self.detector = LiveImpactDetector(dcfg, self._on_audio)
+            try:
+                self.detector.start()
+                status["audio"] = "aktiv"
+            except Exception as e:  # noqa: BLE001
+                status["audio"] = f"FEHLER: {e}"
+                self.detector = None
+        self._stop.clear()
+        self._saver = threading.Thread(target=self._save_loop, daemon=True, name="saver")
+        self._saver.start()
+        return status
+
+    def stop(self):
+        self._stop.set()
+        self.triggers.put((None, "quit"))
+        if self.detector:
+            self.detector.stop()
+            self.detector = None
+        for w in self.workers.values():
+            w.stop()
+        if self._saver:
+            self._saver.join(timeout=15)
+
+    # --- Zugriff fürs UI ----------------------------------------------------
+    def latest(self, view: str) -> np.ndarray | None:
+        w = self.workers.get(view)
+        return None if w is None else w.latest
+
+    def fps(self, view: str) -> float:
+        return self.workers[view].measured_fps
+
+    @property
+    def audio_level(self) -> float:
+        """Pegel relativ zur Auslöseschwelle (1.0 = löst aus)."""
+        if not self.detector:
+            return 0.0
+        return self.detector.level / max(self.detector.cfg.min_peak, 1e-6)
+
+    # --- Trigger ------------------------------------------------------------
+    def _on_audio(self, t: float):
+        if self.armed and not self.saving:
+            self.triggers.put((t, "audio"))
+
+    def trigger_manual(self):
+        """Speichert die letzten Sekunden (Aufruf kurz nach dem Schlag)."""
+        cap = self.cfg["capture"]
+        t = time.perf_counter() - cap["post_roll_s"] - cap["video_latency_s"]
+        self.triggers.put((t, "manual"))
+
+    def _save_loop(self):
+        while not self._stop.is_set():
+            t, src = self.triggers.get()
+            if src == "quit":
+                return
+            if self.session_dir is None:
+                self.on_status("Kein Session-Ordner – Swing verworfen")
+                continue
+            self.saving = True
+            try:
+                self.on_status(f"Swing erkannt ({src}) – speichere …")
+                out = self.save(t, src)
+                if out:
+                    self.on_swing(out)
+            except Exception as e:  # noqa: BLE001
+                self.on_status(f"Speichern fehlgeschlagen: {e}")
+            finally:
+                self.saving = False
 
     def next_swing_dir(self) -> Path:
+        self.session_dir.mkdir(parents=True, exist_ok=True)
         n = len(list(self.session_dir.glob("swing_*"))) + 1
         while (self.session_dir / f"swing_{n:03d}").exists():
             n += 1
         return self.session_dir / f"swing_{n:03d}"
 
-    def trigger(self, t_impact: float, source: str):
-        self.triggers.put((t_impact, source))
-
     def save(self, t_impact: float, source: str) -> Path | None:
         cap = self.cfg["capture"]
         t_impact_video = t_impact + cap["video_latency_s"]
         t0, t1 = t_impact_video - cap["pre_roll_s"], t_impact_video + cap["post_roll_s"]
-        # warten bis Post-Roll im Puffer ist
-        while time.perf_counter() < t1 + 0.1:
+        while time.perf_counter() < t1 + 0.1:  # warten bis Post-Roll im Puffer ist
             time.sleep(0.02)
         fps = float(min(self.cfg["cameras"][v]["fps"] for v in VIEWS))
         timeline = np.arange(t0, t1, 1.0 / fps)
-        snaps = {v: w.snapshot(t0 - 0.2, t1 + 0.2) for v, w in self.workers.items()}
-        if any(len(s) < 10 for s in snaps.values()):
-            print("  ! Zu wenige Frames im Puffer – Swing verworfen")
+        snaps = {v: w.snapshot(t0 - 0.2, t1 + 0.2) for v, w in self.workers.items()
+                 if w.running.is_set()}
+        snaps = {v: s for v, s in snaps.items() if len(s) >= 10}
+        if not snaps:
+            self.on_status("Zu wenige Frames im Puffer – Swing verworfen")
             return None
         out = self.next_swing_dir()
         out.mkdir()
+        impact_wall = time.time() - (time.perf_counter() - t_impact)
         meta = {"recorded_at": datetime.now().isoformat(timespec="seconds"),
+                "impact_wallclock": datetime.fromtimestamp(impact_wall).isoformat(
+                    timespec="milliseconds"),
                 "trigger": source, "fps": fps, "synced": True,
                 "impact_time_s": float(t_impact_video - t0) if source == "audio" else None,
                 "cameras": {}}
@@ -178,111 +298,59 @@ class Recorder:
                                   "max_resample_error_ms": round(float(
                                       np.max(np.abs(ts[idx] - timeline)) * 1000), 1)}
         (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        self.saved.append(out)
         return out
 
-    def run(self, preview: bool = False):
-        for w in self.workers.values():
-            w.start()
-        deadline = time.time() + 10
-        while time.time() < deadline and not all(
-                w.running.is_set() or w.error for w in self.workers.values()):
-            time.sleep(0.05)
-        for v, w in self.workers.items():
-            if w.error:
-                raise RuntimeError(f"[{v}] {w.error}")
-            print(f"  {v.upper():3s}: {w.info}")
 
-        detector = None
-        acfg = self.cfg["audio"]
-        if acfg["enabled"]:
-            from .audio import LiveDetectorConfig, LiveImpactDetector
-            dcfg = LiveDetectorConfig(**{k: acfg[k] for k in (
-                "samplerate", "highpass_hz", "threshold_factor", "min_peak", "refractory_s",
-                "device")})
-            detector = LiveImpactDetector(dcfg, lambda t: self.trigger(t, "audio"))
-            try:
-                detector.start()
-                print("  Audio-Trigger aktiv – einfach schlagen.")
-            except Exception as e:  # noqa: BLE001
-                print(f"  ! Audio-Trigger nicht verfügbar ({e}); nur manuell per Enter.")
-                detector = None
+def run_cli(cfg: dict, session_dir: Path, preview: bool = False) -> list[Path]:
+    """Konsolen-Modus: Enter = manuell speichern, q = beenden."""
+    saved: list[Path] = []
+    pool = None
+    if cfg["capture"]["auto_analyze"]:
+        from concurrent.futures import ProcessPoolExecutor
+        pool = ProcessPoolExecutor(max_workers=1)
 
-        def stdin_loop():
-            for line in sys.stdin:
-                cmd = line.strip().lower()
-                if cmd in ("q", "quit", "exit"):
-                    self.triggers.put((None, "quit"))
-                    return
-                self.trigger(time.perf_counter(), "manual")
+    def on_swing(p: Path):
+        saved.append(p)
+        print(f"  ✓ {p}", flush=True)
+        if pool:
+            from .pipeline import analyze_swing_safe
+            pool.submit(analyze_swing_safe, str(p), cfg.get("_config_path"))
 
-        threading.Thread(target=stdin_loop, daemon=True).start()
-        print("  Enter = letzten Swing manuell speichern, q + Enter = beenden\n")
+    eng = CaptureEngine(cfg, session_dir, on_swing, lambda s: print("  " + s, flush=True))
+    for v, s in eng.start().items():
+        print(f"  {v.upper():5s}: {s}")
+    eng.armed = True
+    quit_ev = threading.Event()
 
-        if self.cfg["capture"]["auto_analyze"]:
-            from concurrent.futures import ProcessPoolExecutor
-            self._pool = ProcessPoolExecutor(max_workers=1)
+    def stdin_loop():
+        for line in sys.stdin:
+            if line.strip().lower() in ("q", "quit", "exit"):
+                quit_ev.set()
+                return
+            eng.trigger_manual()
 
-        last_status = 0.0
-        try:
-            while True:
-                if preview:
-                    self._show_preview(detector)
-                try:
-                    t, src = self.triggers.get(timeout=0.03)
-                except queue.Empty:
-                    if time.time() - last_status > 10:
-                        fps = " ".join(f"{v}={w.measured_fps:.0f}fps"
-                                       for v, w in self.workers.items())
-                        print(f"  … bereit ({fps})", flush=True)
-                        last_status = time.time()
-                    continue
-                if src == "quit":
+    threading.Thread(target=stdin_loop, daemon=True).start()
+    print("  Bereit. Enter = Swing manuell speichern, q + Enter = beenden\n")
+    try:
+        while not quit_ev.is_set():
+            if preview:
+                tiles = [cv2.resize(f, (640, int(640 * f.shape[0] / f.shape[1])))
+                         for f in (eng.latest(v) for v in VIEWS) if f is not None]
+                if tiles and len({t.shape for t in tiles}) == 1:
+                    cv2.imshow("swinglab", np.hstack(tiles))
+                if cv2.waitKey(30) & 0xFF == ord("q"):
                     break
-                if src == "manual":  # manuell: Enter kurz nach dem Schlag -> Ende = jetzt
-                    t = t - self.cfg["capture"]["post_roll_s"] - self.cfg["capture"]["video_latency_s"]
-                print(f"  ● Swing erkannt ({src}) – speichere …", flush=True)
-                out = self.save(t, src)
-                if out:
-                    print(f"  ✓ {out}")
-                    if self._pool:
-                        from .pipeline import analyze_swing_safe
-                        self._pool.submit(analyze_swing_safe, str(out),
-                                          self.cfg.get("_config_path"))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            if detector:
-                detector.stop()
-            for w in self.workers.values():
-                w.stop()
-            if self._pool:
-                print("  Warte auf laufende Analysen …")
-                self._pool.shutdown(wait=True)
-            cv2.destroyAllWindows()
-
-    def _show_preview(self, detector):
-        tiles = []
-        for v, w in self.workers.items():
-            f = w.latest
-            if f is None:
-                continue
-            f = cv2.resize(f, (640, int(640 * f.shape[0] / f.shape[1])))
-            h, wd = f.shape[:2]
-            for x in (wd // 3, 2 * wd // 3):
-                cv2.line(f, (x, 0), (x, h), (80, 80, 80), 1)
-            cv2.putText(f, f"{v.upper()} {w.measured_fps:.0f}fps", (10, 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            tiles.append(f)
-        if tiles:
-            img = np.hstack(tiles) if len({t.shape for t in tiles}) == 1 else tiles[0]
-            if detector:
-                lvl = min(1.0, detector.level / max(detector.cfg.min_peak, 1e-6))
-                cv2.rectangle(img, (0, img.shape[0] - 8), (int(img.shape[1] * lvl), img.shape[0]),
-                              (0, 0, 255) if lvl >= 1 else (0, 200, 0), -1)
-            cv2.imshow("swinglab", img)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                self.triggers.put((None, "quit"))
+            else:
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        eng.stop()
+        if pool:
+            print("  Warte auf laufende Analysen …")
+            pool.shutdown(wait=True)
+        cv2.destroyAllWindows()
+    return saved
 
 
 def list_cameras(backend: str = "auto", max_index: int = 8) -> list[tuple[int, str]]:

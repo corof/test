@@ -51,15 +51,14 @@ def cmd_settings(cfg, a):
 
 
 def cmd_capture(cfg, a):
-    from .capture import Recorder, new_session_dir
+    from .capture import new_session_dir, run_cli
     if a.no_analyze:
         cfg["capture"]["auto_analyze"] = False
     session = Path(a.session) if a.session else new_session_dir(cfg)
     print(f"Session: {session}")
-    rec = Recorder(cfg, session)
-    rec.run(preview=a.preview)
-    print(f"{len(rec.saved)} Swings gespeichert.")
-    if rec.saved:
+    saved = run_cli(cfg, session, preview=a.preview)
+    print(f"{len(saved)} Swings gespeichert.")
+    if saved:
         from .report import build
         print(f"Report: {build(cfg['paths']['data_dir'])}")
 

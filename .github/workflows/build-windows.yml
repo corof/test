@@ -1,0 +1,62 @@
+name: Windows-App bauen
+
+on:
+  push:
+    paths:
+      - "swinglab/**"
+      - "packaging/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pytest pyinstaller
+
+      - name: Tests
+        run: pytest -q
+
+      - name: MediaPipe-Modelle laden (werden in die App eingebaut)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force models | Out-Null
+          foreach ($v in "lite", "full", "heavy") {
+            Invoke-WebRequest "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_$v/float16/latest/pose_landmarker_$v.task" -OutFile "models/pose_landmarker_$v.task"
+          }
+
+      - name: App packen (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --windowed --name SwingLab
+          --collect-all mediapipe
+          --collect-all sounddevice
+          --collect-data swinglab
+          --hidden-import swinglab.app.main
+          --add-data "models;models"
+          packaging/launcher.py
+
+      - name: Selbsttest der gepackten App
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\SwingLab\SwingLab.exe" -ArgumentList "--selftest", "$PWD\selftest.txt" -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen (Exit $($p.ExitCode))" }
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwingLab-Windows
+          path: dist/SwingLab
+          retention-days: 30

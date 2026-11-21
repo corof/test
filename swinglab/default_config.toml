@@ -18,7 +18,7 @@ fps = 60                    # Kiyo Pro: 60 fps nur ohne HDR
 fourcc = "MJPG"             # MJPG ist für 1080p60 über USB nötig
 autofocus = false
 focus = -1                  # -1 = nicht setzen
-exposure = -9               # DirectShow log2-Sekunden: -8=1/256s, -9=1/512s, -10=1/1024s; null = Auto
+exposure = -9               # DirectShow log2-Sekunden: -8=1/256s, -9=1/512s, -10=1/1024s; "auto" = Automatik
 gain = -1                   # -1 = nicht setzen
 px_per_cm = 0.0             # 0 = nicht kalibriert -> Schätzung aus Körpergrösse
 
@@ -73,3 +73,10 @@ trail_knee_extension_deg = 15.0 # hinteres Knie streckt im Rückschwung (DTL)
 tempo_min = 2.5
 tempo_max = 3.6
 lead_elbow_top_min_deg = 145.0
+
+[shots]                      # Mevo+-Livedaten über GSPro Open Connect (optional)
+open_connect = false         # Empfänger aktivieren
+port = 921                   # Port, auf den der Connector sendet
+forward_host = ""            # leer = swinglab ist Endpunkt; sonst GSPro-Adresse (Relais)
+forward_port = 0
+match_window_s = 15          # Schuss max. so viele Sekunden nach dem Impact

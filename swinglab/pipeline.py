@@ -102,3 +102,15 @@ def import_clips(cfg: dict, session_dir: Path, dtl: str | None, fo: str | None,
                 meta.setdefault("impact_by_view", {})[v] = round(hits[0], 4)
     (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return out
+
+
+def analyze_swing_job(swing_dir: str, cfg: dict, force: bool = False) -> str:
+    """Prozess-Job für die App: analysiert und gibt eine Kurzmeldung zurück."""
+    res = analyze_swing(swing_dir, cfg, force=force)
+    m = res["metrics"]
+    if not res["phases"]:
+        why = "; ".join(res.get("warnings", [])) or "kein Golfer erkannt"
+        return "Analyse fehlgeschlagen – " + why
+    top = res["findings"][0]["title"] if res["findings"] else "keine Auffälligkeiten"
+    tempo = f"Tempo {m['tempo_ratio']:.1f}:1 – " if m.get("tempo_ratio") is not None else ""
+    return f"analysiert: {tempo}{top}"

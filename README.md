@@ -1,4 +1,4 @@
-# swinglab – Golfschwung-Analyse mit 2 Webcams + Mevo+
+# SwingLab – Golfschwung-Analyse mit 2 Webcams + Mevo+
 
 Automatische Schwunganalyse für den Golfsimulator: zwei Webcams (Down-the-Line und Face-On) nehmen
 jeden Schlag auf, sobald das Treffgeräusch erkannt wird. Pose-Schätzung (MediaPipe, 33 Körperpunkte)
@@ -14,18 +14,56 @@ landet in einem HTML-Report mit Verlauf und Korrelationen Körper ↔ Ballflug.
                                    report.html ◄── Feedback + Drills ◄┘ + Overlay-Video + Keyframes
 ```
 
-## Installation (Windows-PC am Simulator)
+## SwingLab – die Desktop-App (empfohlen)
 
-1. **Python 3.12** installieren (python.org, «Add to PATH» anhaken). MediaPipe hat für 3.12 die stabilsten Wheels.
-2. **ffmpeg** (für browsertaugliche Videos): `winget install Gyan.FFmpeg`
-3. Repo klonen und installieren:
-   ```powershell
-   git clone https://github.com/corof/test.git swinglab; cd swinglab
-   py -3.12 -m venv .venv; .venv\Scripts\activate
-   pip install -e .
-   swinglab init          # legt config.toml an
-   ```
-   Das MediaPipe-Modell (~30 MB) wird bei der ersten Analyse automatisch geladen.
+Aufnahme, Schwungdaten und Analyse in **einer** Software mit vier Bereichen:
+
+| Bereich | Inhalt |
+|---|---|
+| **Aufnahme** | Live-Bild beider Kameras, Mikrofonpegel, «Session starten». Jeder Schlag wird automatisch gespeichert und im Hintergrund analysiert. «Letzter Swing» zeigt Keyframes, Kennzahlen, Mevo+-Werte und den wichtigsten Verbesserungspunkt mit Drill. |
+| **Analyse** | Alle Sessions/Swings. Synchroner Player DTL + Face-On mit Skelett und Referenzlinien, Zeitlupe (1/8× bis 1×), Einzelbild, Sprung zu Address/Top/Impact usw., Feedback, Kennzahlen, Mevo+-Daten. Mevo+-CSV- und Video-Import. |
+| **Verlauf** | Grösste Baustellen, alle Kennzahlen über die Zeit (Filter nach Zeitraum/Schläger), Korrelation Körper ↔ Ballflug, HTML-Report. |
+| **Einstellungen** | Golfer, Kameras (Auflösung, fps, Belichtung, Treiberdialog), Kalibrierung per Klick ins Live-Bild, Audio-Trigger, Mevo+ live. |
+
+### Installation
+
+**Variante A – fertige .exe (kein Python nötig):**
+1. Auf GitHub → *Actions* → «Windows-App bauen» → letzten grünen Lauf öffnen → Artefakt **SwingLab-Windows** herunterladen.
+2. ZIP entpacken (z.B. nach `C:\Programme\SwingLab`) und `SwingLab.exe` starten. Die MediaPipe-Modelle sind eingebaut.
+3. Daten und Einstellungen liegen in `Dokumente\SwingLab` (anderer Ort: `SwingLab.exe --home D:\Golf`).
+
+Falls Windows SmartScreen warnt («Unbekannter Herausgeber»): *Weitere Informationen → Trotzdem ausführen*
+(die App ist nicht signiert).
+
+**Variante B – aus dem Quellcode:**
+```powershell
+git clone https://github.com/corof/test.git swinglab; cd swinglab
+py -3.12 -m venv .venv; .venv\Scripts\activate
+pip install -e .
+swinglab-app
+```
+Optional `winget install Gyan.FFmpeg`: Damit sind die Overlay-Videos auch im HTML-Report abspielbar.
+
+### Erster Start
+1. **Einstellungen:** Kamera-Nummern eintragen (0, 1 …; DTL und FO ggf. tauschen), Auflösung 1920×1080,
+   60 fps, Belichtung −9. Mikrofon wählen. «Übernehmen». Im Aufnahme-Tab beide Bilder prüfen.
+2. **Kalibrieren:** Stab bekannter Länge in die Ebene des Golfers halten → «Kalibrieren …» → beide Enden
+   anklicken.
+3. **Aufnahme → Session starten** und schlagen. Der Mikrofonpegel muss beim Treffer über die orange
+   Marke gehen (sonst in den Einstellungen «Mindestpegel» senken).
+4. **Mevo+-Daten:**
+   - *Live:* Unterstützt deine Sim-Software/der Mevo+-Connector das GSPro-Open-Connect-Protokoll, in
+     den Einstellungen «Mevo+ live» aktivieren. Jeder Schuss wird dann automatisch dem Swing zugeordnet
+     (Relais-Modus: weiter an GSPro).
+   - *Sonst:* nach der Session in der FS Golf App als CSV exportieren → Analyse → «Mevo+-CSV importieren».
+
+## Kommandozeile (Alternative / Automatisierung)
+
+```powershell
+pip install -e .
+swinglab init          # legt config.toml an
+```
+Das MediaPipe-Modell (~30 MB) wird bei der ersten Analyse automatisch geladen.
 
 ## Kameras einrichten (Razer Kiyo Pro)
 
@@ -118,10 +156,11 @@ Schwellwerte für das Feedback stehen in `config.toml` unter `[thresholds]`.
 
 ```bash
 pip install -e .[dev]
-pytest            # Tests laufen mit synthetischen Schwüngen, ohne Kamera
+pytest            # Tests laufen mit synthetischen Schwüngen, ohne Kamera (inkl. GUI offscreen)
 ```
 
-Struktur: `capture.py` (Aufnahme/Ringpuffer) · `audio.py` (Impact-Erkennung) · `pose.py` (MediaPipe,
+Struktur: `app/` (Desktop-App, PySide6) · `capture.py` (Aufnahme-Engine/Ringpuffer) · `shots.py`
+(Mevo+ live via Open Connect, Zuordnung) · `store.py` (Datenablage) · `audio.py` (Impact-Erkennung) · `pose.py` (MediaPipe,
 Glättung) · `analysis.py` (Phasen + Kennzahlen) · `feedback.py` (Regeln + Drills) · `overlay.py`
 (Video/Keyframes) · `mevo.py` (CSV-Import + Zuordnung) · `report.py` (HTML) · `cli.py`.
 

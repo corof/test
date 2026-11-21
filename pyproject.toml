@@ -13,6 +13,7 @@ dependencies = [
   "opencv-python>=4.8",
   "mediapipe>=0.10.14",
   "sounddevice>=0.4.6",
+  "PySide6-Essentials>=6.6",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 swinglab = "swinglab.cli:main"
+
+[project.gui-scripts]
+swinglab-app = "swinglab.app.main:main"
 
 [tool.setuptools.packages.find]
 include = ["swinglab*"]

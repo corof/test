@@ -47,6 +47,12 @@ class PoseTrack:
 
 
 def ensure_model(model_dir: str | Path, variant: str = "heavy") -> Path:
+    import sys
+    name = f"pose_landmarker_{variant}.task"
+    # In der Windows-App (PyInstaller) ist das Modell eingebaut
+    for base in (getattr(sys, "_MEIPASS", None), Path(sys.executable).parent):
+        if base and (Path(base) / "models" / name).exists():
+            return Path(base) / "models" / name
     model_dir = Path(model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
     path = model_dir / f"pose_landmarker_{variant}.task"
