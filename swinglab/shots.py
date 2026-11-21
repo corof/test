@@ -99,16 +99,24 @@ class OpenConnectServer(threading.Thread):
                 continue
             threading.Thread(target=self._serve_client, args=(conn, addr), daemon=True).start()
 
+    def _connect_upstream(self, conn: socket.socket) -> socket.socket | None:
+        """Verbindung zu GSPro (Relais-Modus); Antworten gehen an den Connector zurück."""
+        if not self.forward:
+            return None
+        try:
+            up = socket.create_connection(self.forward, timeout=3)
+            up.settimeout(None)  # Rückkanal blockierend lesen
+        except OSError as e:
+            self.on_status(f"GSPro unter {self.forward[0]}:{self.forward[1]} nicht erreichbar ({e}) "
+                           "– Schüsse werden trotzdem aufgezeichnet")
+            return None
+        threading.Thread(target=self._pipe_back, args=(up, conn), daemon=True).start()
+        self.on_status(f"Relais aktiv: Connector → SwingLab → GSPro {self.forward[0]}:{self.forward[1]}")
+        return up
+
     def _serve_client(self, conn: socket.socket, addr):
-        self.on_status(f"Launch Monitor verbunden ({addr[0]})")
-        upstream = None
-        if self.forward:
-            try:
-                upstream = socket.create_connection(self.forward, timeout=3)
-                threading.Thread(target=self._pipe_back, args=(upstream, conn), daemon=True).start()
-            except OSError as e:
-                self.on_status(f"Weiterleitung an {self.forward} fehlgeschlagen: {e}")
-                upstream = None
+        self.on_status(f"Launch-Monitor-Connector verbunden ({addr[0]})")
+        upstream = self._connect_upstream(conn)
         buf = ""
         conn.settimeout(1.0)
         with conn:
@@ -121,10 +129,13 @@ class OpenConnectServer(threading.Thread):
                     break
                 if not data:
                     break
+                if self.forward and upstream is None:  # GSPro inzwischen gestartet?
+                    upstream = self._connect_upstream(conn)
                 if upstream:
                     try:
                         upstream.sendall(data)
                     except OSError:
+                        upstream.close()
                         upstream = None
                 msgs, buf = split_json_stream(buf + data.decode("utf-8", "replace"))
                 for m in msgs:
@@ -132,14 +143,14 @@ class OpenConnectServer(threading.Thread):
                     if shot:
                         shot["received_at"] = datetime.now().isoformat(timespec="milliseconds")
                         self.on_shot(shot)
-                    if not upstream:  # selbst antworten, wenn kein GSPro dahinter
+                    if not upstream:  # ohne GSPro selbst antworten, damit der Connector zufrieden ist
                         try:
                             conn.sendall(json.dumps({"Code": 200, "Message": "Shot received"}).encode())
                         except OSError:
                             pass
         if upstream:
             upstream.close()
-        self.on_status("Launch Monitor getrennt")
+        self.on_status("Launch-Monitor-Connector getrennt")
 
     @staticmethod
     def _pipe_back(src: socket.socket, dst: socket.socket):

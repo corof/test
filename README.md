@@ -51,11 +51,32 @@ Optional `winget install Gyan.FFmpeg`: Damit sind die Overlay-Videos auch im HTM
    anklicken.
 3. **Aufnahme → Session starten** und schlagen. Der Mikrofonpegel muss beim Treffer über die orange
    Marke gehen (sonst in den Einstellungen «Mindestpegel» senken).
-4. **Mevo+-Daten:**
-   - *Live:* Unterstützt deine Sim-Software/der Mevo+-Connector das GSPro-Open-Connect-Protokoll, in
-     den Einstellungen «Mevo+ live» aktivieren. Jeder Schuss wird dann automatisch dem Swing zugeordnet
-     (Relais-Modus: weiter an GSPro).
-   - *Sonst:* nach der Session in der FS Golf App als CSV exportieren → Analyse → «Mevo+-CSV importieren».
+4. **Mevo+-Daten:** siehe nächster Abschnitt.
+
+### Mevo+ mit GSPro: Live-Daten
+
+SwingLab hängt sich als **Relais** zwischen den Mevo+-Connector und GSPro. GSPro bekommt jeden Schuss
+unverändert, und SwingLab ordnet ihn gleichzeitig dem aufgenommenen Swing zu:
+
+```
+Mevo+ ──WLAN──► Connector ──► SwingLab (Port 9210) ──► GSPro (Port 921)
+                                   │
+                                   └─► Schuss → passender Swing (Path, Face, Carry …)
+```
+
+1. SwingLab → Einstellungen → «Mevo+ live über GSPro»: *Empfänger aktiv*, Port `9210`,
+   Weiterleiten an `127.0.0.1`, Port `921` (Standard) → Übernehmen.
+2. Im **Connector** die GSPro-Adresse von `127.0.0.1:921` auf `127.0.0.1:9210` ändern.
+3. GSPro wie gewohnt starten. Die Statuszeile von SwingLab zeigt «Relais aktiv», sobald der
+   Connector verbunden ist.
+
+**Wichtig:** Das funktioniert nur mit einem Connector, der das *GSPro Open Connect API* spricht und eine
+einstellbare Adresse hat (z.B. der MLM2PRO-GSPro-Connector, der den Mevo+ unterstützt). Verbindet
+sich GSPro über die **eingebaute** FlightScope-Anbindung direkt mit dem Mevo+, gibt es keinen
+Datenstrom, in den sich SwingLab einklinken kann.
+
+Ohne Live-Verbindung bleibt der CSV-Import (Analyse → «Mevo+-CSV importieren …»). Dafür müssen die
+Schüsse aber in der FS Golf App aufgezeichnet worden sein.
 
 ## Kommandozeile (Alternative / Automatisierung)
 

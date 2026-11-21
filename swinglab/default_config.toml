@@ -76,7 +76,7 @@ lead_elbow_top_min_deg = 145.0
 
 [shots]                      # Mevo+-Livedaten über GSPro Open Connect (optional)
 open_connect = false         # Empfänger aktivieren
-port = 921                   # Port, auf den der Connector sendet
-forward_host = ""            # leer = swinglab ist Endpunkt; sonst GSPro-Adresse (Relais)
-forward_port = 0
+port = 9210                  # Port, auf den der Connector sendet (GSPro selbst belegt 921)
+forward_host = "127.0.0.1"   # Relais an GSPro; leer = SwingLab ist Endpunkt (ohne GSPro)
+forward_port = 921
 match_window_s = 15          # Schuss max. so viele Sekunden nach dem Impact

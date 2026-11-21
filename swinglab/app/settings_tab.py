@@ -177,21 +177,24 @@ class SettingsTab(QWidget):
         grid.addWidget(g, 2, 0)
 
         # Mevo+ live
-        g = QGroupBox("Mevo+ live (GSPro Open Connect)")
+        g = QGroupBox("Mevo+ live über GSPro (Open Connect, Relais)")
         f = QFormLayout(g)
         self.w["oc"] = QCheckBox("Empfänger aktiv")
         self.w["oc_port"] = QSpinBox()
         self.w["oc_port"].setRange(0, 65535)
         self.w["fw_host"] = QLineEdit()
-        self.w["fw_host"].setPlaceholderText("leer = swinglab ist Endpunkt")
+        self.w["fw_host"].setPlaceholderText("leer = ohne GSPro (SwingLab ist Endpunkt)")
         self.w["fw_port"] = QSpinBox()
         self.w["fw_port"].setRange(0, 65535)
         f.addRow("", self.w["oc"])
         f.addRow("Port", self.w["oc_port"])
         f.addRow("Weiterleiten an (GSPro)", self.w["fw_host"])
         f.addRow("Weiterleit-Port", self.w["fw_port"])
-        f.addRow(QLabel("<span style='color:#8f8e86'>Ohne Live-Verbindung: Mevo+-CSV im "
-                        "Analyse-Tab importieren.</span>"))
+        hint = QLabel("<span style='color:#8f8e86'>Connector (z.B. MLM2PRO-GSPro-Connector) auf "
+                      "127.0.0.1 : Port oben zeigen lassen statt auf 921. SwingLab reicht alles "
+                      "an GSPro weiter und ordnet jeden Schuss dem Swing zu.</span>")
+        hint.setWordWrap(True)
+        f.addRow(hint)
         grid.addWidget(g, 2, 1)
 
         b_apply = QPushButton("Übernehmen && Kameras neu starten")

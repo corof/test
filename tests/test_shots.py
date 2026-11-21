@@ -53,3 +53,33 @@ def test_server_roundtrip():
             time.sleep(0.02)
     srv.stop()
     assert len(got) == 1 and got[0]["club_speed"] == 83.0
+
+
+def test_relay_to_gspro():
+    """Connector → SwingLab → (Fake-)GSPro; Antwort von GSPro kommt beim Connector an."""
+    import threading
+    received = []
+    gs = socket.socket()
+    gs.bind(("127.0.0.1", 0))
+    gs.listen(1)
+
+    def fake_gspro():
+        c, _ = gs.accept()
+        data = c.recv(65536)
+        received.append(data)
+        c.sendall(b'{"Code":200,"Message":"GSPro ok"}')
+        time.sleep(0.5)
+        c.close()
+
+    threading.Thread(target=fake_gspro, daemon=True).start()
+    got = []
+    srv = OpenConnectServer(got.append, port=0, forward=("127.0.0.1", gs.getsockname()[1]))
+    srv.start()
+    assert srv.ready.wait(3)
+    with socket.create_connection(("127.0.0.1", srv.port), timeout=3) as c:
+        c.sendall(json.dumps(MSG).encode())
+        assert b"GSPro ok" in c.recv(200)
+    srv.stop()
+    gs.close()
+    assert json.loads(received[0])["BallData"]["Speed"] == 112.3
+    assert got and got[0]["carry"] == 152.4

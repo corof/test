@@ -39,7 +39,7 @@ def test_main_window_tabs(tmp_path, monkeypatch):
         w.tabs.setCurrentWidget(w.trends)
         w.tabs.setCurrentWidget(w.settings)
         c = w.settings.collect()
-        assert c["cameras"]["fo"]["index"] == str(sw / "fo.mp4") and c["shots"]["port"] == 921
+        assert c["cameras"]["fo"]["index"] == str(sw / "fo.mp4") and c["shots"]["port"] == 9210
     finally:
         w.close()
         app.processEvents()
