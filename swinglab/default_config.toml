@@ -1,0 +1,75 @@
+# swinglab – Standardkonfiguration
+# Eigene Anpassungen in ./config.toml schreiben (wird darüber gelegt).
+# `swinglab init` legt eine Kopie dieser Datei als config.toml an.
+
+[golfer]
+handedness = "right"        # "right" oder "left"
+body_height_cm = 180        # Fallback-Massstab, falls keine Kalibrierung vorhanden
+
+[paths]
+data_dir = "data"           # Sessions, Clips, Analysen, Reports
+model_dir = "models"        # MediaPipe-Modelle (werden automatisch geladen)
+
+[cameras.dtl]               # Down-the-Line (von hinten)
+index = 0                   # `swinglab cams` listet die Indizes
+width = 1920
+height = 1080
+fps = 60                    # Kiyo Pro: 60 fps nur ohne HDR
+fourcc = "MJPG"             # MJPG ist für 1080p60 über USB nötig
+autofocus = false
+focus = -1                  # -1 = nicht setzen
+exposure = -9               # DirectShow log2-Sekunden: -8=1/256s, -9=1/512s, -10=1/1024s; null = Auto
+gain = -1                   # -1 = nicht setzen
+px_per_cm = 0.0             # 0 = nicht kalibriert -> Schätzung aus Körpergrösse
+
+[cameras.fo]                # Face-On (von vorne/seitlich)
+index = 1
+width = 1920
+height = 1080
+fps = 60
+fourcc = "MJPG"
+autofocus = false
+focus = -1
+exposure = -9
+gain = -1
+px_per_cm = 0.0
+
+[capture]
+backend = "auto"            # auto | dshow | msmf | v4l2 | any
+pre_roll_s = 2.5            # Sekunden vor dem Treffmoment
+post_roll_s = 1.5           # Sekunden nach dem Treffmoment
+jpeg_quality = 92           # Ringpuffer im RAM als JPEG
+video_latency_s = 0.06      # Kamera-Latenz gegenüber dem Mikrofon (Feinabstimmung)
+auto_analyze = true         # Swing nach dem Speichern im Hintergrund analysieren
+
+[audio]
+enabled = true
+device = ""                 # leer = Standardmikrofon; Teil des Namens genügt, z.B. "Kiyo"
+samplerate = 48000
+highpass_hz = 2500          # Treffgeräusch ist hochfrequent
+threshold_factor = 12.0     # Spitze muss X-mal über dem Grundrauschen liegen
+min_peak = 0.08             # absolute Mindestamplitude (0..1)
+refractory_s = 3.0          # Totzeit nach einem Trigger (Ball trifft Leinwand etc.)
+
+[analysis]
+model = "heavy"             # lite | full | heavy (heavy = genaueste)
+min_visibility = 0.5
+smooth_window_s = 0.1       # Savitzky-Golay-Fenster
+max_gap_frames = 12         # Lücken bis zu dieser Länge werden interpoliert
+
+[mevo]
+match_tolerance_s = 30      # Zuordnung Schuss <-> Clip über Zeitstempel
+
+# Schwellwerte für Feedback (Zentimeter / Grad). Vorzeichen-Konvention siehe README.
+[thresholds]
+head_sway_impact_cm = 5.0       # Kopf Richtung Ziel bis Impact
+head_sway_top_cm = 8.0          # Kopf vom Ziel weg im Rückschwung
+head_vertical_cm = 5.0          # Kopf hoch/runter bis Impact
+hip_sway_top_cm = 8.0           # Becken vom Ziel weg im Rückschwung
+hip_slide_impact_min_cm = 2.0   # Becken sollte bei Impact Richtung Ziel sein
+early_extension_cm = 5.0        # Becken Richtung Ball bis Impact (DTL)
+spine_angle_loss_deg = 6.0      # Aufrichten bis Impact (DTL)
+trail_knee_extension_deg = 15.0 # hinteres Knie streckt im Rückschwung (DTL)
+tempo_min = 2.5
+tempo_max = 3.6
+lead_elbow_top_min_deg = 145.0
